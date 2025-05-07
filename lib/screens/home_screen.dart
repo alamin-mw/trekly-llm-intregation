@@ -15,6 +15,7 @@ class _HomeScreenState extends State<HomeScreen> {
   MapboxMap? mapboxMapController;
   PointAnnotationManager? pointAnnotationManager;
   StreamSubscription? userPositionStream;
+  CircleAnnotationManager? circleAnnotationManager;
 
   // Add these properties
   OverlayEntry? _overlayEntry;
@@ -40,11 +41,10 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() {
       mapboxMapController = mapboxMap;
     });
-
-    // Initialize pointAnnotationManager
     pointAnnotationManager =
         await mapboxMap.annotations.createPointAnnotationManager();
-
+    circleAnnotationManager =
+        await mapboxMap.annotations.createCircleAnnotationManager();
     mapboxMapController?.location.updateSettings(
       LocationComponentSettings(enabled: true, pulsingEnabled: true),
     );
@@ -115,7 +115,6 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  // Modify your _handleMapTap method
   void _handleMapTap(Point point) async {
     if (pointAnnotationManager == null) return;
 
@@ -127,17 +126,16 @@ class _HomeScreenState extends State<HomeScreen> {
       image: imageData,
       iconSize: 0.3,
     );
-
-    // Optional: Clear previous annotations
+    CircleAnnotationOptions circleAnnotationOptions = CircleAnnotationOptions(
+      geometry: point,
+      circleRadius: 30,
+      circleOpacity: 0.5,
+    );
     await pointAnnotationManager?.deleteAll();
-
-    // Create new annotation
+    await circleAnnotationManager?.deleteAll();
+    await circleAnnotationManager?.create(circleAnnotationOptions);
     await pointAnnotationManager?.create(pointAnnotationOptions);
 
-    // Show the overlay with location details
-    _showOverlay(context, point);
-
-    print('Tapped at: ${point.coordinates.lat}, ${point.coordinates.lng}');
   }
 
   Future<void> _setupPositionTracking() async {
