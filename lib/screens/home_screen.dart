@@ -7,9 +7,11 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:geolocator/geolocator.dart' as geo;
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
 import 'package:http/http.dart' as http;
+import 'dart:typed_data';
+import 'dart:math' as math;
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({Key? key}) : super(key: key);
+  const HomeScreen({super.key});
 
   @override
   _HomeScreenState createState() => _HomeScreenState();
@@ -22,16 +24,17 @@ class _HomeScreenState extends State<HomeScreen> {
   MapboxMap? mapboxMapController;
   PointAnnotationManager? pointAnnotationManager;
   CircleAnnotationManager? circleAnnotationManager;
+  PolylineAnnotationManager? polylineAnnotationManager;
   StreamSubscription? userPositionStream;
   OverlayEntry? _overlayEntry;
   bool _isOverlayVisible = false;
-  List _suggestions = []; // Add this line
+  List _suggestions = [];
 
   final List<Map<String, dynamic>> _tourLocations = [
     {
       'name': 'Eiffel Tower',
       'coordinates': Position(2.2945, 48.8584),
-      'description': 'The iconic symbol of Paris, France',
+      'description': 'The iconic symbol of Paris, France, built in 1889.',
     },
     {
       'name': 'Colosseum',
@@ -48,9 +51,17 @@ class _HomeScreenState extends State<HomeScreen> {
   int _currentTourStop = 0;
   bool _isTourActive = false;
 
+  @override
   void initState() {
     super.initState();
     _setupPositionTracking();
+  }
+
+  @override
+  void dispose() {
+    _hideOverlay();
+    userPositionStream?.cancel();
+    super.dispose();
   }
 
   @override
@@ -107,7 +118,6 @@ class _HomeScreenState extends State<HomeScreen> {
                   MapAnimationOptions(duration: 2000, startDelay: 0),
                 );
 
-                // Pass the place data to _handleMapTap
                 _handleMapTap(point, placeData: data);
               }
             },
@@ -207,31 +217,53 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                     ),
                   ),
-                Positioned(
-                  bottom: 20,
-                  left: 20,
-                  child: Container(
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.2),
-                          blurRadius: 6,
-                          offset: const Offset(0, 3),
-                        ),
-                      ],
-                    ),
-                    child: FloatingActionButton(
-                      heroTag: 'centerOnMe',
-                      onPressed: _flyToUserLocation,
-                      backgroundColor: Theme.of(context).primaryColor,
-                      elevation: _fabElevation,
-                      shape: const CircleBorder(),
-                      child: const Icon(
-                        Icons.my_location,
-                        color: Colors.white,
-                        size: 24,
+                const SizedBox(height: 10),
+                Container(
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.2),
+                        blurRadius: 6,
+                        offset: const Offset(0, 3),
                       ),
+                    ],
+                  ),
+                  child: FloatingActionButton(
+                    heroTag: 'centerOnMe',
+                    onPressed: _flyToUserLocation,
+                    backgroundColor: Theme.of(context).primaryColor,
+                    elevation: _fabElevation,
+                    shape: const CircleBorder(),
+                    child: const Icon(
+                      Icons.my_location,
+                      color: Colors.white,
+                      size: 24,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Container(
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.2),
+                        blurRadius: 6,
+                        offset: const Offset(0, 3),
+                      ),
+                    ],
+                  ),
+                  child: FloatingActionButton(
+                    heroTag: 'wanderMode',
+                    onPressed: _activateWanderMode,
+                    backgroundColor: Theme.of(context).primaryColor,
+                    elevation: _fabElevation,
+                    shape: const CircleBorder(),
+                    child: const Icon(
+                      Icons.directions_walk,
+                      color: Colors.white,
+                      size: 24,
                     ),
                   ),
                 ),
@@ -243,7 +275,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  _onMapCreated(MapboxMap mapboxMap) async {
+  void _onMapCreated(MapboxMap mapboxMap) async {
     setState(() {
       mapboxMapController = mapboxMap;
     });
@@ -253,6 +285,8 @@ class _HomeScreenState extends State<HomeScreen> {
           await mapboxMap.annotations.createPointAnnotationManager();
       circleAnnotationManager =
           await mapboxMap.annotations.createCircleAnnotationManager();
+      polylineAnnotationManager =
+          await mapboxMap.annotations.createPolylineAnnotationManager();
 
       await mapboxMap.location.updateSettings(
         LocationComponentSettings(enabled: true, pulsingEnabled: true),
@@ -423,7 +457,7 @@ class _HomeScreenState extends State<HomeScreen> {
           distanceFilter: 100,
         ),
       ).listen((geo.Position position) {
-        if (mapboxMapController != null) {
+        if (mapboxMapController != null && !_isTourActive) {
           mapboxMapController?.setCamera(
             CameraOptions(
               center: Point(
@@ -439,13 +473,6 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  @override
-  void dispose() {
-    _hideOverlay();
-    userPositionStream?.cancel();
-    super.dispose();
-  }
-
   String _generateSessionToken() {
     return DateTime.now().millisecondsSinceEpoch.toString();
   }
@@ -458,16 +485,235 @@ class _HomeScreenState extends State<HomeScreen> {
       );
 
       mapboxMapController?.flyTo(
-        CameraOptions(
-          center: point,
-          zoom: 15,
-          bearing: 0, // Reset bearing to north
-          pitch: 0, // Reset pitch to flat
-        ),
+        CameraOptions(center: point, zoom: 15, bearing: 0, pitch: 0),
         MapAnimationOptions(duration: 2000, startDelay: 0),
       );
     } catch (e) {
       print('Error getting user location: $e');
     }
   }
+
+  void _activateWanderMode() async {
+    try {
+      // Get user position
+      final position = await geo.Geolocator.getCurrentPosition(
+        desiredAccuracy: geo.LocationAccuracy.high,
+      );
+
+      // Find nearest landmark
+      Map<String, dynamic>? nearestLandmark;
+      double minDistance = double.infinity;
+      for (var landmark in _tourLocations) {
+        final distance = geo.Geolocator.distanceBetween(
+          position.latitude,
+          position.longitude,
+          landmark['coordinates'].lat.toDouble(),
+          landmark['coordinates'].lng.toDouble(),
+        );
+        if (distance < minDistance) {
+          minDistance = distance;
+          nearestLandmark = landmark;
+        }
+      }
+
+      if (nearestLandmark == null) {
+        _showError('No landmarks available');
+        return;
+      }
+
+      final targetPoint = Point(coordinates: nearestLandmark['coordinates']);
+      String guidanceText;
+      Map<String, dynamic> placeData = {
+        'features': [
+          {
+            'properties': {
+              'name': nearestLandmark['name'],
+              'full_address': nearestLandmark['description'],
+            },
+          },
+        ],
+      };
+
+      Point destination;
+      if (minDistance <= 200.0) {
+        // Within 200m, navigate directly to landmark
+        destination = targetPoint;
+        guidanceText =
+            'You are near the ${nearestLandmark['name']}. ${nearestLandmark['description']} Follow the path to explore.';
+      } else {
+        // Calculate a point 200m closer to the landmark
+        destination = await _getPointCloser(
+          position,
+          nearestLandmark['coordinates'],
+          minDistance,
+        );
+        guidanceText =
+            'You are ${minDistance.round()} meters from the ${nearestLandmark['name']}. '
+            'Follow the route to get closer to ${nearestLandmark['description']}';
+      }
+
+      // Start navigation to destination
+      await _startNavigation(position, destination);
+
+      // Show overlay with guidance text
+      _showOverlay(context, destination, placeData: placeData);
+    } catch (e) {
+      _showError('Error in Wander Mode: $e');
+    }
+  }
+
+  Future<Point> _getPointCloser(
+    geo.Position current,
+    Position target,
+    double distance,
+  ) async {
+    // Fetch route to get intermediate points
+    final route = await _getRoute(
+      Point(coordinates: Position(current.longitude, current.latitude)),
+      Point(coordinates: target),
+    );
+
+    if (route != null && route.coordinates.isNotEmpty) {
+      // Find a point approximately 200m closer along the route
+      double accumulatedDistance = 0.0;
+      Position lastCoord = route.coordinates.first;
+      for (var coord in route.coordinates.skip(1)) {
+        final segmentDistance = geo.Geolocator.distanceBetween(
+          lastCoord.lat.toDouble(),
+          lastCoord.lng.toDouble(),
+          coord.lat.toDouble(),
+          coord.lng.toDouble(),
+        );
+        accumulatedDistance += segmentDistance;
+        if (accumulatedDistance >= (distance - 200.0)) {
+          return Point(coordinates: lastCoord);
+        }
+        lastCoord = coord;
+      }
+      // If route is too short, return the last point
+      return Point(coordinates: route.coordinates.last);
+    }
+
+    // Fallback: Calculate a point 200m closer using spherical geometry
+    final bearing = geo.Geolocator.bearingBetween(
+      current.latitude,
+      current.longitude,
+      target.lat.toDouble(),
+      target.lng.toDouble(),
+    );
+
+    // Earth's radius in meters
+    const earthRadius = 6371000.0;
+    final distanceToTravel = distance - 200.0; // Move 200m closer
+    final angularDistance = distanceToTravel / earthRadius;
+
+    final lat1 = current.latitude * math.pi / 180;
+    final lon1 = current.longitude * math.pi / 180;
+    final bearingRad = bearing * math.pi / 180;
+
+    final lat2 = math.asin(
+      math.sin(lat1) * math.cos(angularDistance) +
+          math.cos(lat1) * math.sin(angularDistance) * math.cos(bearingRad),
+    );
+    final lon2 =
+        lon1 +
+        math.atan2(
+          math.sin(bearingRad) * math.sin(angularDistance) * math.cos(lat1),
+          math.cos(angularDistance) - math.sin(lat1) * math.sin(lat2),
+        );
+
+    final newLat = lat2 * 180 / math.pi;
+    final newLon = lon2 * 180 / math.pi;
+
+    return Point(coordinates: Position(newLon, newLat));
+  }
+
+  Future<void> _startNavigation(
+    geo.Position position,
+    Point destination,
+  ) async {
+    if (mapboxMapController == null || pointAnnotationManager == null) return;
+
+    // Clear existing annotations
+    await pointAnnotationManager?.deleteAll();
+    await circleAnnotationManager?.deleteAll();
+    await polylineAnnotationManager?.deleteAll();
+
+    // Add user marker
+    final userPoint = Point(
+      coordinates: Position(position.longitude, position.latitude),
+    );
+    final userIconBytes = await rootBundle.load('assets/user-icon.png');
+    final userIconData = userIconBytes.buffer.asUint8List();
+    await pointAnnotationManager?.create(
+      PointAnnotationOptions(
+        geometry: userPoint,
+        image: userIconData,
+        iconSize: 0.3,
+      ),
+    );
+
+    // Add destination marker
+    final destIconBytes = await rootBundle.load('assets/custom-icon.png');
+    final destIconData = destIconBytes.buffer.asUint8List();
+    await pointAnnotationManager?.create(
+      PointAnnotationOptions(
+        geometry: destination,
+        image: destIconData,
+        iconSize: 0.3,
+      ),
+    );
+
+    // Fetch and draw route
+    final route = await _getRoute(userPoint, destination);
+    if (route != null) {
+      await polylineAnnotationManager?.create(
+        PolylineAnnotationOptions(
+          geometry: route,
+          lineColor: Colors.blue.value,
+          lineWidth: 5.0,
+          lineOpacity: 0.8,
+        ),
+      );
+    }
+
+    // Center map on user
+    mapboxMapController?.flyTo(
+      CameraOptions(center: userPoint, zoom: 15, bearing: 0, pitch: 0),
+      MapAnimationOptions(duration: 2000, startDelay: 0),
+    );
+  }
+
+  Future<LineString?> _getRoute(Point origin, Point destination) async {
+    final accessToken = dotenv.env['MAPBOX_ACCESS_TOKEN']!;
+    final url =
+        'https://api.mapbox.com/directions/v5/mapbox/walking/${origin.coordinates.lng},${origin.coordinates.lat};${destination.coordinates.lng},${destination.coordinates.lat}?geometries=geojson&access_token=$accessToken';
+
+    final response = await http.get(Uri.parse(url));
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body);
+      final coordinates = data['routes'][0]['geometry']['coordinates'] as List;
+      return LineString(
+        coordinates:
+            coordinates.map((coord) => Position(coord[0], coord[1])).toList(),
+      );
+    }
+    return null;
+  }
+
+  void _showError(String message) {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+  }
+}
+
+void main() async {
+  await dotenv.load(fileName: '.env');
+  runApp(
+    MaterialApp(
+      home: const HomeScreen(),
+      theme: ThemeData(primarySwatch: Colors.blue),
+    ),
+  );
 }
