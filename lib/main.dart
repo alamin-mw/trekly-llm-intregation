@@ -2,9 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
-import 'views/home_screen.dart';
+import 'screens/home_screen.dart';
 import 'screens/plan_screen.dart';
 import 'screens/profile_screen.dart';
+import 'views/chat_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -54,10 +55,19 @@ class _BottomNavState extends State<BottomNav> {
     });
   }
 
+  void _openChat(BuildContext context) {
+    showDialog(context: context, builder: (context) => const ChatScreen());
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: _screens[_selectedIndex],
+      floatingActionButton: FloatingActionButton(
+        onPressed: () => _openChat(context),
+        tooltip: 'Chat with AI',
+        child: const Icon(Icons.chat),
+      ),
       bottomNavigationBar: BottomNavigationBar(
         items: const <BottomNavigationBarItem>[
           BottomNavigationBarItem(icon: Icon(Icons.explore), label: 'Explore'),
