@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
-import 'screens/home_screen.dart';
+import 'views/home_screen.dart';
 import 'screens/plan_screen.dart';
 import 'screens/profile_screen.dart';
 
@@ -15,7 +16,7 @@ void main() async {
   String accessToken = dotenv.env['MAPBOX_ACCESS_TOKEN'] ?? '';
   MapboxOptions.setAccessToken(accessToken);
 
-  runApp(const MyApp());
+  runApp(const ProviderScope(child: MyApp()));
 }
 
 class MyApp extends StatelessWidget {
