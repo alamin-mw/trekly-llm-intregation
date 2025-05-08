@@ -37,8 +37,6 @@ dependencies:
   mapbox_maps_flutter: ^2.0.0
   geolocator: ^14.0.0
   flutter_dotenv: ^5.2.1
-  mapbox_search: ^4.3.1
-  dio: ^5.8.0+1
   http: ^1.4.0
 
 dev_dependencies:

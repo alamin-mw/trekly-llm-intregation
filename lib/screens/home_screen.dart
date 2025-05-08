@@ -16,6 +16,9 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+  static const _fabElevation = 4.0;
+  static const _fabSize = 56.0;
+
   MapboxMap? mapboxMapController;
   PointAnnotationManager? pointAnnotationManager;
   CircleAnnotationManager? circleAnnotationManager;
@@ -23,6 +26,27 @@ class _HomeScreenState extends State<HomeScreen> {
   OverlayEntry? _overlayEntry;
   bool _isOverlayVisible = false;
   List _suggestions = []; // Add this line
+
+  final List<Map<String, dynamic>> _tourLocations = [
+    {
+      'name': 'Eiffel Tower',
+      'coordinates': Position(2.2945, 48.8584),
+      'description': 'The iconic symbol of Paris, France',
+    },
+    {
+      'name': 'Colosseum',
+      'coordinates': Position(12.4924, 41.8902),
+      'description': 'Ancient amphitheater in Rome, Italy',
+    },
+    {
+      'name': 'Taj Mahal',
+      'coordinates': Position(78.0421, 27.1751),
+      'description': 'Beautiful mausoleum in Agra, India',
+    },
+  ];
+
+  int _currentTourStop = 0;
+  bool _isTourActive = false;
 
   void initState() {
     super.initState();
@@ -97,6 +121,122 @@ class _HomeScreenState extends State<HomeScreen> {
                 MapAnimationOptions(duration: 2000, startDelay: 0),
               );
             },
+          ),
+          Positioned(
+            bottom: 20,
+            right: 20,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (!_isTourActive)
+                  FloatingActionButton.extended(
+                    onPressed: () {
+                      setState(() {
+                        _isTourActive = true;
+                        _currentTourStop = 0;
+                      });
+                      _navigateToTourLocation(_currentTourStop);
+                    },
+                    backgroundColor: Theme.of(context).primaryColor,
+                    elevation: 4,
+                    icon: const Icon(Icons.tour, color: Colors.white),
+                    label: const Text(
+                      'Start Guided Tour',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  )
+                else
+                  Card(
+                    elevation: _fabElevation,
+                    color: Theme.of(context).primaryColor,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8.0,
+                        vertical: 4.0,
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(
+                            icon: const Icon(Icons.arrow_back),
+                            onPressed:
+                                _currentTourStop > 0
+                                    ? () {
+                                      setState(() {
+                                        _currentTourStop--;
+                                      });
+                                      _navigateToTourLocation(_currentTourStop);
+                                    }
+                                    : null,
+                            color: Colors.white,
+                          ),
+                          Text(
+                            '${_currentTourStop + 1}/${_tourLocations.length}',
+                            style: const TextStyle(color: Colors.white),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.arrow_forward),
+                            onPressed:
+                                _currentTourStop < _tourLocations.length - 1
+                                    ? () {
+                                      setState(() {
+                                        _currentTourStop++;
+                                      });
+                                      _navigateToTourLocation(_currentTourStop);
+                                    }
+                                    : null,
+                            color: Colors.white,
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.close),
+                            onPressed: () {
+                              setState(() {
+                                _isTourActive = false;
+                                _hideOverlay();
+                              });
+                            },
+                            color: Colors.white,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                Positioned(
+                  bottom: 20,
+                  left: 20,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.2),
+                          blurRadius: 6,
+                          offset: const Offset(0, 3),
+                        ),
+                      ],
+                    ),
+                    child: FloatingActionButton(
+                      heroTag: 'centerOnMe',
+                      onPressed: _flyToUserLocation,
+                      backgroundColor: Theme.of(context).primaryColor,
+                      elevation: _fabElevation,
+                      shape: const CircleBorder(),
+                      child: const Icon(
+                        Icons.my_location,
+                        color: Colors.white,
+                        size: 24,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
         ],
       ),
@@ -232,6 +372,32 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  void _navigateToTourLocation(int index) {
+    if (index >= 0 && index < _tourLocations.length) {
+      final location = _tourLocations[index];
+      final point = Point(coordinates: location['coordinates']);
+
+      mapboxMapController?.flyTo(
+        CameraOptions(center: point, zoom: 15, bearing: 180, pitch: 30),
+        MapAnimationOptions(duration: 2000, startDelay: 0),
+      );
+
+      _handleMapTap(
+        point,
+        placeData: {
+          'features': [
+            {
+              'properties': {
+                'name': location['name'],
+                'full_address': location['description'],
+              },
+            },
+          ],
+        },
+      );
+    }
+  }
+
   Future<void> _setupPositionTracking() async {
     try {
       final servicesEnabled = await geo.Geolocator.isLocationServiceEnabled();
@@ -282,5 +448,26 @@ class _HomeScreenState extends State<HomeScreen> {
 
   String _generateSessionToken() {
     return DateTime.now().millisecondsSinceEpoch.toString();
+  }
+
+  void _flyToUserLocation() async {
+    try {
+      final position = await geo.Geolocator.getCurrentPosition();
+      final point = Point(
+        coordinates: Position(position.longitude, position.latitude),
+      );
+
+      mapboxMapController?.flyTo(
+        CameraOptions(
+          center: point,
+          zoom: 15,
+          bearing: 0, // Reset bearing to north
+          pitch: 0, // Reset pitch to flat
+        ),
+        MapAnimationOptions(duration: 2000, startDelay: 0),
+      );
+    } catch (e) {
+      print('Error getting user location: $e');
+    }
   }
 }
