@@ -1,10 +1,16 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io'; // Added for File class
 import 'package:Trekly/model/tour_location.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart' as geo;
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
+import 'package:just_audio/just_audio.dart';
+import 'package:http/http.dart' as http;
+import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:path_provider/path_provider.dart'; // Added for getTemporaryDirectory
 
 import '../services/map_service.dart';
 import '../services/location_service.dart';
@@ -26,6 +32,11 @@ class HomeViewModel extends ChangeNotifier {
   OverlayEntry? _overlayEntry;
   bool _isOverlayVisible = false;
   List<dynamic> _suggestions = [];
+  bool _isLoadingVoice = false;
+  final AudioPlayer player = AudioPlayer();
+  String? _errorMessage;
+  String? get errorMessage => _errorMessage;
+
   final List<TourLocation> _tourLocations = [
     TourLocation(
       name: 'Eiffel Tower',
@@ -116,6 +127,11 @@ class HomeViewModel extends ChangeNotifier {
     }
   }
 
+  void setIsLoadingVoice(bool value) {
+    _isLoadingVoice = value;
+    notifyListeners();
+  }
+
   void startTour() {
     _isTourActive = true;
     _currentTourStop = 0;
@@ -160,8 +176,96 @@ class HomeViewModel extends ChangeNotifier {
     }
   }
 
+  Future<void> playTextToSpeech(String text) async {
+    print("Playing text to speech: $text");
+    setIsLoadingVoice(true);
+    final apiKey = dotenv.env['ELEVEN_API_KEY'];
+    if (apiKey == null || apiKey.isEmpty) {
+      setIsLoadingVoice(false);
+      _errorMessage = 'ElevenLabs API key is not set';
+      notifyListeners();
+      throw Exception('ElevenLabs API key is not set');
+    }
+
+    const voiceRachel = '21m00Tcm4TlvDq8ikWAM';
+    const url = 'https://api.elevenlabs.io/v1/text-to-speech/$voiceRachel';
+    print("Request URL: $url");
+
+    try {
+      final response = await http.post(
+        Uri.parse(url),
+        headers: {
+          'accept': 'audio/mpeg',
+          'xi-api-key': apiKey,
+          'Content-Type': 'application/json',
+        },
+        body: json.encode({
+          "text": text,
+          "model_id": "eleven_monolingual_v1",
+          "voice_settings": {"stability": 0.15, "similarity_boost": 0.75},
+        }),
+      );
+
+      print("API Response Status: ${response.statusCode}");
+      print("API Response Headers: ${response.headers}");
+      print("API Response Body Length: ${response.bodyBytes.length}");
+
+      if (response.statusCode == 200) {
+        final bytes = response.bodyBytes;
+        if (bytes.isEmpty) {
+          throw Exception('Received empty audio data from API');
+        }
+
+        // Save to temporary file
+        final tempDir = await getTemporaryDirectory();
+        final tempFile = File(
+          '${tempDir.path}/temp_audio_${DateTime.now().millisecondsSinceEpoch}.mp3',
+        );
+        await tempFile.writeAsBytes(bytes);
+        print("Saved audio to: ${tempFile.path}");
+
+        await player.stop();
+        await player.setAudioSource(AudioSource.file(tempFile.path));
+        await player.play();
+
+        // Clean up temporary file after playback
+        player.playbackEventStream.listen((event) {
+          if (event.processingState == ProcessingState.completed) {
+            tempFile.delete().then(
+              (_) => print("Deleted temp file: ${tempFile.path}"),
+            );
+          }
+        }, onError: (e) => print("Playback error: $e"));
+      } else {
+        String errorMessage;
+        switch (response.statusCode) {
+          case 401:
+            errorMessage = 'Invalid ElevenLabs API key';
+            break;
+          case 429:
+            errorMessage = 'API rate limit exceeded';
+            break;
+          default:
+            errorMessage = 'Failed to load audio: ${response.statusCode}';
+        }
+        print("API Error: $errorMessage, Body: ${response.body}");
+        _errorMessage = errorMessage;
+        notifyListeners();
+        throw Exception(errorMessage);
+      }
+    } catch (e) {
+      print("Error in playTextToSpeech: $e");
+      _errorMessage = 'Failed to play audio: $e';
+      notifyListeners();
+      throw Exception('Failed to play audio: $e');
+    } finally {
+      setIsLoadingVoice(false);
+    }
+  }
+
   Future<void> activateWanderMode() async {
     try {
+      print('Finding landmark');
       final position = await _locationService.getCurrentPosition();
       TourLocation? nearestLandmark;
       double minDistance = double.infinity;
@@ -177,8 +281,9 @@ class HomeViewModel extends ChangeNotifier {
           nearestLandmark = landmark;
         }
       }
-
       if (nearestLandmark == null) {
+        _errorMessage = 'No landmarks available';
+        notifyListeners();
         throw Exception('No landmarks available');
       }
 
@@ -211,10 +316,20 @@ class HomeViewModel extends ChangeNotifier {
             'Follow the route to get closer to ${nearestLandmark.description}';
       }
 
+      try {
+        await playTextToSpeech(guidanceText);
+      } catch (e) {
+        debugPrint('Error playing TTS in Wander Mode: $e');
+        _errorMessage = 'Failed to play audio guidance: $e';
+        notifyListeners();
+      }
+
       await _startNavigation(position, destination);
       _showOverlay(destination, placeData: placeData);
     } catch (e) {
       debugPrint('Error in Wander Mode: $e');
+      _errorMessage = 'Wander Mode error: $e';
+      notifyListeners();
     }
   }
 
@@ -323,6 +438,8 @@ class HomeViewModel extends ChangeNotifier {
       _showOverlay(point, placeData: placeData);
     } catch (e) {
       debugPrint('Error handling map tap: $e');
+      _errorMessage = 'Failed to handle map tap: $e';
+      notifyListeners();
     }
   }
 
@@ -476,10 +593,47 @@ class HomeViewModel extends ChangeNotifier {
     );
   }
 
+  void clearError() {
+    _errorMessage = null;
+    notifyListeners();
+  }
+
   @override
   void dispose() {
+    player.dispose();
     _hideOverlay();
     _locationService.stopPositionTracking();
     super.dispose();
+  }
+}
+
+class MyCustomSource extends StreamAudioSource {
+  final List<int> bytes;
+  final String contentType;
+
+  MyCustomSource(this.bytes, {this.contentType = 'audio/mpeg'}) {
+    print(
+      "MyCustomSource initialized with ${bytes.length} bytes, contentType: $contentType",
+    );
+    if (bytes.isEmpty) {
+      throw Exception('Audio source bytes cannot be empty');
+    }
+  }
+
+  @override
+  Future<StreamAudioResponse> request([int? start, int? end]) async {
+    start ??= 0;
+    end ??= bytes.length;
+    if (start < 0 || end > bytes.length || start > end) {
+      throw Exception('Invalid byte range: $start-$end');
+    }
+    print("MyCustomSource request: $start-$end, total length: ${bytes.length}");
+    return StreamAudioResponse(
+      sourceLength: bytes.length,
+      contentLength: end - start,
+      offset: start,
+      stream: Stream.value(bytes.sublist(start, end)),
+      contentType: contentType,
+    );
   }
 }

@@ -1,8 +1,8 @@
+import 'package:Trekly/views/home_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
-import 'screens/home_screen.dart';
 import 'screens/plan_screen.dart';
 import 'screens/profile_screen.dart';
 import 'views/chat_screen.dart';
