@@ -1,11 +1,11 @@
-import 'package:Trekly/views/home_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'views/home_screen.dart';
 import 'screens/plan_screen.dart';
-import 'screens/profile_screen.dart';
 import 'views/chat_screen.dart';
+import 'views/welcome_carousel_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -20,15 +20,16 @@ void main() async {
   runApp(const ProviderScope(child: MyApp()));
 }
 
-class MyApp extends StatelessWidget {
+class MyApp extends ConsumerWidget {
   const MyApp({super.key});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    // Start with WelcomeCarouselScreen for first-time users
     return MaterialApp(
       title: 'Trekly',
       theme: ThemeData(primarySwatch: Colors.blue, useMaterial3: true),
-      home: const BottomNav(),
+      home: const WelcomeCarouselScreen(),
     );
   }
 }
@@ -44,9 +45,8 @@ class _BottomNavState extends State<BottomNav> {
   int _selectedIndex = 0;
 
   final List<Widget> _screens = [
-    const HomeScreen(),
-    const PlanScreen(),
-    const ProfileScreen(),
+    const HomeScreen(), // Explore tab
+    const PlanScreen(), // Plan tab
   ];
 
   void _onItemTapped(int index) {
@@ -72,7 +72,6 @@ class _BottomNavState extends State<BottomNav> {
         items: const <BottomNavigationBarItem>[
           BottomNavigationBarItem(icon: Icon(Icons.explore), label: 'Explore'),
           BottomNavigationBarItem(icon: Icon(Icons.tour), label: 'Plan'),
-          BottomNavigationBarItem(icon: Icon(Icons.person), label: 'Profile'),
         ],
         currentIndex: _selectedIndex,
         selectedItemColor: Colors.blue,

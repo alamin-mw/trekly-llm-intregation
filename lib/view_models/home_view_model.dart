@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io'; // Added for File class
+import 'dart:io';
 import 'package:Trekly/model/tour_location.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -10,13 +10,11 @@ import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:http/http.dart' as http;
 import 'package:flutter_dotenv/flutter_dotenv.dart';
-import 'package:path_provider/path_provider.dart'; // Added for getTemporaryDirectory
-
+import 'package:path_provider/path_provider.dart';
 import '../services/map_service.dart';
 import '../services/location_service.dart';
 import 'dart:math' as math;
 
-// Define the Riverpod provider for HomeViewModel
 final homeViewModelProvider = ChangeNotifierProvider<HomeViewModel>((ref) {
   return HomeViewModel();
 });
@@ -36,6 +34,19 @@ class HomeViewModel extends ChangeNotifier {
   final AudioPlayer player = AudioPlayer();
   String? _errorMessage;
   String? get errorMessage => _errorMessage;
+
+  final StreamController<double> _stylePackProgress =
+      StreamController.broadcast();
+  final StreamController<double> _tileRegionLoadProgress =
+      StreamController.broadcast();
+  TileStore? _tileStore;
+  OfflineManager? _offlineManager;
+  final String _tileRegionId = "my-tile-region";
+  bool _isOfflineMapDownloaded = false;
+
+  Stream<double> get stylePackProgress => _stylePackProgress.stream;
+  Stream<double> get tileRegionLoadProgress => _tileRegionLoadProgress.stream;
+  bool get isOfflineMapDownloaded => _isOfflineMapDownloaded;
 
   final List<TourLocation> _tourLocations = [
     TourLocation(
@@ -84,6 +95,120 @@ class HomeViewModel extends ChangeNotifier {
       debugPrint('Error initializing annotations: $e');
     }
     notifyListeners();
+  }
+
+  Future<void> initOfflineMap() async {
+    try {
+      _offlineManager = await OfflineManager.create();
+      _tileStore = await TileStore.createDefault();
+      _tileStore?.setDiskQuota(null); // Reset disk quota to default
+      notifyListeners();
+    } catch (e) {
+      _errorMessage = 'Failed to initialize offline map: $e';
+      notifyListeners();
+    }
+  }
+
+  Future<void> downloadStylePack() async {
+    try {
+      final stylePackLoadOptions = StylePackLoadOptions(
+        glyphsRasterizationMode:
+            GlyphsRasterizationMode.IDEOGRAPHS_RASTERIZED_LOCALLY,
+        metadata: {"tag": "test"},
+        acceptExpired: false,
+      );
+      await _offlineManager
+          ?.loadStylePack(
+            MapboxStyles.DARK, // Match your map style
+            stylePackLoadOptions,
+            (progress) {
+              final percentage =
+                  progress.completedResourceCount /
+                  progress.requiredResourceCount;
+              if (!_stylePackProgress.isClosed) {
+                _stylePackProgress.sink.add(percentage);
+              }
+            },
+          )
+          .then((value) {
+            _stylePackProgress.sink.add(1);
+            if (!_stylePackProgress.isClosed) {
+              _stylePackProgress.sink.close();
+            }
+          });
+    } catch (e) {
+      _errorMessage = 'Failed to download style pack: $e';
+      notifyListeners();
+    }
+  }
+
+  // Download tile region
+  Future<void> downloadTileRegion(Point center) async {
+    try {
+      final tileRegionLoadOptions = TileRegionLoadOptions(
+        geometry:
+            center
+                .toJson(), // Center on specified point (e.g., user location or tour location)
+        descriptorsOptions: [
+          TilesetDescriptorOptions(
+            styleURI: MapboxStyles.DARK, // Match your map style
+            minZoom: 0,
+            maxZoom: 16,
+          ),
+        ],
+        acceptExpired: true,
+        networkRestriction: NetworkRestriction.NONE,
+      );
+
+      await _tileStore
+          ?.loadTileRegion(_tileRegionId, tileRegionLoadOptions, (progress) {
+            final percentage =
+                progress.completedResourceCount /
+                progress.requiredResourceCount;
+            if (!_tileRegionLoadProgress.isClosed) {
+              _tileRegionLoadProgress.sink.add(percentage);
+            }
+          })
+          .then((value) {
+            _tileRegionLoadProgress.sink.add(1);
+            _isOfflineMapDownloaded = true;
+            if (!_tileRegionLoadProgress.isClosed) {
+              _tileRegionLoadProgress.sink.close();
+            }
+            notifyListeners();
+          });
+    } catch (e) {
+      _errorMessage = 'Failed to download tile region: $e';
+      notifyListeners();
+    }
+  }
+
+  // Clean up offline resources
+  Future<void> removeTileRegionAndStylePack() async {
+    try {
+      await _tileStore?.removeRegion(_tileRegionId);
+      _tileStore?.setDiskQuota(0); // Clear predictive cache
+      await _offlineManager?.removeStylePack(MapboxStyles.DARK);
+      _isOfflineMapDownloaded = false;
+      notifyListeners();
+    } catch (e) {
+      _errorMessage = 'Failed to clean up offline resources: $e';
+      notifyListeners();
+    }
+  }
+
+  void setUserPreferences({
+    required List<String> interests,
+    required String walkingSpeed,
+  }) {}
+  // Start offline map download for a specific location
+  Future<void> startOfflineDownload(Point center) async {
+    await initOfflineMap();
+    await downloadStylePack();
+    await downloadTileRegion(center);
+    await OfflineSwitch.shared.setMapboxStackConnected(
+      false,
+    ); // Simulate offline mode
   }
 
   Future<void> searchPlaces(String query) async {
@@ -600,6 +725,8 @@ class HomeViewModel extends ChangeNotifier {
 
   @override
   void dispose() {
+    _stylePackProgress.close();
+    _tileRegionLoadProgress.close();
     player.dispose();
     _hideOverlay();
     _locationService.stopPositionTracking();
